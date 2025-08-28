@@ -20,7 +20,6 @@ This program avoids external libraries and aims for clear, readable code for ext
 from __future__ import annotations
 
 from dataclasses import dataclass
-from fractions import Fraction
 from typing import Dict, Tuple, List
 import sys
 
@@ -32,45 +31,42 @@ if sys.version_info < (3, 10):
 
 @dataclass
 class Polynomial:
-    """Represents a polynomial as a mapping degree -> coefficient (Fractions for exactness)."""
+    """Represents a polynomial as a mapping degree -> coefficient (floats)."""
 
-    coefficients: Dict[int, Fraction]
+    coefficients: Dict[int, float]
 
     def degree(self) -> int:
-        non_zero_degrees = [deg for deg, coef in self.coefficients.items() if coef != 0]
+        non_zero_degrees = [deg for deg, coef in self.coefficients.items() if coef != 0.0]
         if not non_zero_degrees:
             return 0
         return max(non_zero_degrees)
 
     def normalized(self) -> "Polynomial":
         """Remove zero coefficients to keep the representation tidy."""
-        return Polynomial({deg: coef for deg, coef in self.coefficients.items() if coef != 0})
+        return Polynomial({deg: coef for deg, coef in self.coefficients.items() if coef != 0.0})
 
     def __add__(self, other: "Polynomial") -> "Polynomial":
-        result: Dict[int, Fraction] = dict(self.coefficients)
+        result: Dict[int, float] = dict(self.coefficients)
         for deg, coef in other.coefficients.items():
-            result[deg] = result.get(deg, Fraction(0)) + coef
+            result[deg] = result.get(deg, 0.0) + coef
         return Polynomial(result).normalized()
 
     def __sub__(self, other: "Polynomial") -> "Polynomial":
-        result: Dict[int, Fraction] = dict(self.coefficients)
+        result: Dict[int, float] = dict(self.coefficients)
         for deg, coef in other.coefficients.items():
-            result[deg] = result.get(deg, Fraction(0)) - coef
+            result[deg] = result.get(deg, 0.0) - coef
         return Polynomial(result).normalized()
 
 
-def parse_number(text: str) -> Fraction:
-    """Parse a numeric string into a Fraction. Accept integers and decimals."""
+def parse_number(text: str) -> float:
+    """Parse a numeric string into a float. Accept integers and decimals."""
     text = text.strip()
     if not text:
         raise ValueError("Empty number")
-    # Allow leading '+' or '-'
-    if text.count(".") <= 1:
-        try:
-            return Fraction(text)
-        except Exception as exc:
-            raise ValueError(f"Invalid number: {text}") from exc
-    raise ValueError(f"Invalid number format: {text}")
+    try:
+        return float(text)
+    except Exception as exc:
+        raise ValueError(f"Invalid number: {text}") from exc
 
 
 def tokenize_side(side: str) -> List[str]:
@@ -93,7 +89,7 @@ def tokenize_side(side: str) -> List[str]:
     return terms
 
 
-def parse_term(term: str) -> Tuple[int, Fraction]:
+def parse_term(term: str) -> Tuple[int, float]:
     """Parse a single term into (degree, coefficient).
 
     Supported forms (case-insensitive X):
@@ -120,50 +116,33 @@ def parse_term(term: str) -> Tuple[int, Fraction]:
     # Case-insensitive X
     t = t.replace('x', 'X')
 
-    # If no X, it's a constant
+    # If no X, it's a constant number
     if 'X' not in t:
         coef = parse_number(t) * sign
         return (0, coef)
 
-    # Split coefficient and power part
-    # Accept forms: "3*X^2", "3X^2", "X^2", "4*X", "4X", "X"
-    coef_str = ""
-    rest = t
+    # Strict required format for variable terms: "<number>*X^<int>"
+    # Optional whitespace already removed; '*' and '^' are required for non-constant terms
+    # Find '*'
+    if '*' not in t:
+        raise ValueError(f"Invalid term (missing '*'): {term}")
+    coef_str, after_star = t.split('*', 1)
+    if not after_star.startswith('X'):
+        raise ValueError(f"Invalid term (missing 'X'): {term}")
+    after_x = after_star[1:]
+    if not after_x.startswith('^'):
+        raise ValueError(f"Invalid term (missing '^'): {term}")
+    exp_str = after_x[1:]
+    if exp_str == "":
+        raise ValueError(f"Missing exponent after '^' in term: {term}")
+    try:
+        degree = int(exp_str)
+    except Exception as exc:
+        raise ValueError(f"Non-integer exponent in term: {term}") from exc
+    if degree < 0:
+        raise ValueError(f"Negative exponents are not supported: {term}")
 
-    # If starts with 'X', implied coefficient 1
-    if rest.startswith('X'):
-        coef = Fraction(sign)
-        rest = rest[1:]
-    else:
-        # Extract number up to optional '*' or 'X'
-        idx_star = rest.find('*')
-        idx_x = rest.find('X')
-        split_idx = idx_star if (idx_star != -1 and (idx_x == -1 or idx_star < idx_x)) else idx_x
-        if split_idx == -1:
-            raise ValueError(f"Invalid term: {term}")
-        coef_str = rest[:split_idx]
-        coef = parse_number(coef_str) * sign
-        rest = rest[split_idx:]
-        if rest.startswith('*'):
-            rest = rest[1:]
-        if not rest.startswith('X'):
-            raise ValueError(f"Invalid variable in term: {term}")
-        rest = rest[1:]
-
-    # Parse exponent if any
-    degree = 1
-    if rest:
-        if not rest.startswith('^'):
-            raise ValueError(f"Invalid exponent syntax in term: {term}")
-        exp_str = rest[1:]
-        if exp_str == "":
-            raise ValueError(f"Missing exponent after '^' in term: {term}")
-        try:
-            degree = int(exp_str)
-        except Exception as exc:
-            raise ValueError(f"Non-integer exponent in term: {term}") from exc
-        if degree < 0:
-            raise ValueError(f"Negative exponents are not supported: {term}")
+    coef = parse_number(coef_str) * sign
 
     return (degree, coef)
 
@@ -171,10 +150,10 @@ def parse_term(term: str) -> Tuple[int, Fraction]:
 def parse_side_to_poly(side: str) -> Polynomial:
     """Parse a side of an equation into a Polynomial."""
     terms = tokenize_side(side)
-    coefficients: Dict[int, Fraction] = {}
+    coefficients: Dict[int, float] = {}
     for raw_term in terms:
         degree, coef = parse_term(raw_term)
-        coefficients[degree] = coefficients.get(degree, Fraction(0)) + coef
+        coefficients[degree] = coefficients.get(degree, 0.0) + coef
     return Polynomial(coefficients).normalized()
 
 
@@ -195,19 +174,18 @@ def reduce_equation(left: Polynomial, right: Polynomial) -> Polynomial:
     return (left - right).normalized()
 
 
-def format_coefficient(value: Fraction) -> str:
+def format_coefficient(value: float) -> str:
     """Format a coefficient for display in reduced form.
 
     - Print integers without trailing .0
     - Otherwise print as decimal or fraction depending on simplicity
     """
-    if value.denominator == 1:
-        return str(value.numerator)
-    # Display as decimal if finite/simple repeating might look odd; use limited precision
-    # Keep up to 10 significant decimals to preserve clarity in reduced form
-    as_float = float(value)
-    text = f"{as_float:.10f}".rstrip('0').rstrip('.')
-    return text
+    # Print integers without trailing .0
+    if value.is_integer():
+        return str(int(value))
+    # Keep up to 10 decimals and trim
+    text = f"{value:.10f}".rstrip('0').rstrip('.')
+    return text if text else "0"
 
 
 def format_reduced_form(poly: Polynomial) -> str:
@@ -240,18 +218,18 @@ def format_reduced_form(poly: Polynomial) -> str:
     return f"{output} = 0"
 
 
-def solve_degree_0(c: Fraction) -> str:
+def solve_degree_0(c: float) -> str:
     if c == 0:
         return "All real numbers are solutions."
     return "No solution."
 
 
-def solve_degree_1(a: Fraction, b: Fraction) -> Tuple[str, List[str]]:
+def solve_degree_1(a: float, b: float) -> Tuple[str, List[str]]:
     # a * X + b = 0  => X = -b / a
     if a == 0:
         return ("degenerate", [solve_degree_0(b)])
     x = -b / a
-    return ("linear", [format_float_solution(float(x))])
+    return ("linear", [format_float_solution(x)])
 
 
 def sqrt_float(x: float) -> float:
@@ -263,27 +241,27 @@ def format_float_solution(x: float) -> str:
     return f"{x:.6f}"
 
 
-def solve_degree_2(a: Fraction, b: Fraction, c: Fraction) -> Tuple[str, List[str]]:
+def solve_degree_2(a: float, b: float, c: float) -> Tuple[str, List[str]]:
     if a == 0:
         # Fallback to linear
         kind, sols = solve_degree_1(b, c)
         return ("linear_fallback", sols)
 
     # Compute discriminant
-    D = float(b) ** 2 - 4.0 * float(a) * float(c)
+    D = b ** 2 - 4.0 * a * c
     if D > 0:
         sqrtD = sqrt_float(D)
-        x1 = (-float(b) + sqrtD) / (2.0 * float(a))
-        x2 = (-float(b) - sqrtD) / (2.0 * float(a))
+        x1 = (-b + sqrtD) / (2.0 * a)
+        x2 = (-b - sqrtD) / (2.0 * a)
         return ("positive", [format_float_solution(x1), format_float_solution(x2)])
     elif D == 0:
-        x = (-float(b)) / (2.0 * float(a))
+        x = (-b) / (2.0 * a)
         return ("zero", [format_float_solution(x)])
     else:
         # Complex solutions
         sqrt_abs = sqrt_float(-D)
-        real = (-float(b)) / (2.0 * float(a))
-        imag = sqrt_abs / (2.0 * float(a))
+        real = (-b) / (2.0 * a)
+        imag = sqrt_abs / (2.0 * a)
         # Format as a + bi and a - bi with 6 decimals
         real_s = format_float_solution(real)
         imag_s = format_float_solution(abs(imag))
@@ -296,9 +274,9 @@ def solve_equation(poly: Polynomial) -> None:
     deg = poly.degree()
     print(f"Polynomial degree: {deg}")
     # Extract coefficients a2, a1, a0
-    a2 = poly.coefficients.get(2, Fraction(0))
-    a1 = poly.coefficients.get(1, Fraction(0))
-    a0 = poly.coefficients.get(0, Fraction(0))
+    a2 = poly.coefficients.get(2, 0.0)
+    a1 = poly.coefficients.get(1, 0.0)
+    a0 = poly.coefficients.get(0, 0.0)
 
     if deg == 0:
         print(solve_degree_0(a0))
